@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/pesio-ai/be-go-common v0.0.0-20260123134527-9fd98075f18a
+	github.com/pesio-ai/be-go-common v0.0.0-20260123155529-840595c6605c
 )
 
 require (

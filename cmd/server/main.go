@@ -13,6 +13,7 @@ import (
 	"github.com/pesio-ai/be-go-common/database"
 	"github.com/pesio-ai/be-go-common/logger"
 	"github.com/pesio-ai/be-go-common/middleware"
+	"github.com/pesio-ai/be-invoices-service/internal/client"
 	"github.com/pesio-ai/be-invoices-service/internal/handler"
 	"github.com/pesio-ai/be-invoices-service/internal/repository"
 	"github.com/pesio-ai/be-invoices-service/internal/service"
@@ -67,8 +68,19 @@ func main() {
 	// Initialize repositories
 	invoiceRepo := repository.NewInvoiceRepository(db)
 
+	// Initialize service clients
+	vendorsClient := client.NewVendorsClient(getEnv("VENDORS_SERVICE_URL", "http://localhost:8084"))
+	accountsClient := client.NewAccountsClient(getEnv("ACCOUNTS_SERVICE_URL", "http://localhost:8082"))
+	journalsClient := client.NewJournalsClient(getEnv("JOURNALS_SERVICE_URL", "http://localhost:8083"))
+
+	log.Info().
+		Str("vendors_service", getEnv("VENDORS_SERVICE_URL", "http://localhost:8084")).
+		Str("accounts_service", getEnv("ACCOUNTS_SERVICE_URL", "http://localhost:8082")).
+		Str("journals_service", getEnv("JOURNALS_SERVICE_URL", "http://localhost:8083")).
+		Msg("Service clients initialized")
+
 	// Initialize services
-	invoiceService := service.NewInvoiceService(invoiceRepo, log)
+	invoiceService := service.NewInvoiceService(invoiceRepo, vendorsClient, accountsClient, journalsClient, log)
 
 	// Setup HTTP routes
 	httpHandler := handler.NewHTTPHandler(invoiceService, log)
@@ -137,4 +149,12 @@ func main() {
 	}
 
 	log.Info().Msg("Server stopped")
+}
+
+// getEnv gets an environment variable or returns a default value
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

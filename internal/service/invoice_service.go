@@ -8,23 +8,33 @@ import (
 
 	"github.com/pesio-ai/be-go-common/errors"
 	"github.com/pesio-ai/be-go-common/logger"
+	"github.com/pesio-ai/be-invoices-service/internal/client"
 	"github.com/pesio-ai/be-invoices-service/internal/repository"
 )
 
 // InvoiceService handles invoice business logic
 type InvoiceService struct {
-	invoiceRepo *repository.InvoiceRepository
-	log         *logger.Logger
+	invoiceRepo    *repository.InvoiceRepository
+	vendorsClient  *client.VendorsClient
+	accountsClient *client.AccountsClient
+	journalsClient *client.JournalsClient
+	log            *logger.Logger
 }
 
 // NewInvoiceService creates a new invoice service
 func NewInvoiceService(
 	invoiceRepo *repository.InvoiceRepository,
+	vendorsClient *client.VendorsClient,
+	accountsClient *client.AccountsClient,
+	journalsClient *client.JournalsClient,
 	log *logger.Logger,
 ) *InvoiceService {
 	return &InvoiceService{
-		invoiceRepo: invoiceRepo,
-		log:         log,
+		invoiceRepo:    invoiceRepo,
+		vendorsClient:  vendorsClient,
+		accountsClient: accountsClient,
+		journalsClient: journalsClient,
+		log:            log,
 	}
 }
 
@@ -97,8 +107,14 @@ type RecordPaymentRequest struct {
 
 // CreateInvoice creates a new invoice
 func (s *InvoiceService) CreateInvoice(ctx context.Context, req *CreateInvoiceRequest) (*repository.Invoice, error) {
-	// TODO: Validate vendor exists and is active (call AP-1 vendors service)
-	// For now, assume vendor is valid
+	// Validate vendor exists and is active
+	valid, message, err := s.vendorsClient.ValidateVendor(ctx, req.VendorID, req.EntityID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate vendor: %w", err)
+	}
+	if !valid {
+		return nil, errors.InvalidInput("vendor_id", message)
+	}
 
 	// Validate invoice type
 	validTypes := map[string]bool{
@@ -192,8 +208,17 @@ func (s *InvoiceService) CreateInvoice(ctx context.Context, req *CreateInvoiceRe
 			return nil, errors.InvalidInput("tax_rate", "tax rate must be between 0 and 100")
 		}
 
-		// TODO: Validate account exists and allows posting (call GL-1 accounts service)
-		accountsSeen[lineReq.AccountID] = true
+		// Validate account exists and allows posting (only validate each account once)
+		if !accountsSeen[lineReq.AccountID] {
+			valid, message, err := s.accountsClient.ValidateAccount(ctx, lineReq.AccountID, req.EntityID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to validate account %s: %w", lineReq.AccountID, err)
+			}
+			if !valid {
+				return nil, errors.InvalidInput("account_id", fmt.Sprintf("account %s: %s", lineReq.AccountID, message))
+			}
+			accountsSeen[lineReq.AccountID] = true
+		}
 
 		line := &repository.InvoiceLine{
 			LineNumber:  lineReq.LineNumber,
@@ -295,16 +320,65 @@ func (s *InvoiceService) PostInvoice(ctx context.Context, req *PostInvoiceReques
 		return nil, errors.New(errors.ErrCodeConflict, "invoice has already been posted to GL")
 	}
 
-	// TODO: Call GL-2 journals service to create journal entry
-	// For now, simulate GL posting
-	glJournalID := fmt.Sprintf("JE-%s", invoice.InvoiceNumber)
+	// Build journal entry lines from invoice
+	journalLines := make([]*client.JournalLineRequest, 0, len(invoice.Lines)+1)
 
-	// The journal entry would look like:
-	// Debit: GL accounts from invoice lines (total_amount)
-	// Credit: Accounts Payable (total_amount)
+	// Debit lines from invoice line items
+	for i, line := range invoice.Lines {
+		desc := fmt.Sprintf("Invoice %s - %s", invoice.InvoiceNumber, line.Description)
+		journalLines = append(journalLines, &client.JournalLineRequest{
+			LineNumber:  i + 1,
+			AccountID:   line.AccountID,
+			LineType:    "debit",
+			Amount:      line.LineAmount + line.TaxAmount,
+			Description: &desc,
+			Dimension1:  line.Dimension1,
+			Dimension2:  line.Dimension2,
+			Dimension3:  line.Dimension3,
+			Dimension4:  line.Dimension4,
+			Reference:   &invoice.InvoiceNumber,
+		})
+	}
 
-	// TODO: Update vendor balance in AP-1 vendors service
-	// vendor.current_balance += invoice.TotalAmount
+	// Credit line to Accounts Payable
+	// TODO: Make AP account configurable via entity settings
+	apAccountID := "2000" // Default Accounts Payable account
+	apDesc := fmt.Sprintf("Invoice %s from vendor %s", invoice.InvoiceNumber, invoice.VendorID)
+	journalLines = append(journalLines, &client.JournalLineRequest{
+		LineNumber:  len(invoice.Lines) + 1,
+		AccountID:   apAccountID,
+		LineType:    "credit",
+		Amount:      invoice.TotalAmount,
+		Description: &apDesc,
+		Reference:   &invoice.InvoiceNumber,
+	})
+
+	// Create journal entry in GL-2
+	journalReq := &client.CreateJournalRequest{
+		EntityID:      req.EntityID,
+		JournalNumber: fmt.Sprintf("AP-INV-%s", invoice.InvoiceNumber),
+		JournalDate:   invoice.InvoiceDate,
+		JournalType:   "ap_invoice",
+		Description:   invoice.Description,
+		Reference:     &invoice.InvoiceNumber,
+		Currency:      invoice.Currency,
+		Lines:         journalLines,
+	}
+
+	glJournalID, err := s.journalsClient.CreateJournal(ctx, journalReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create journal entry: %w", err)
+	}
+
+	// Post the journal entry immediately
+	if err := s.journalsClient.PostJournal(ctx, glJournalID, req.EntityID); err != nil {
+		return nil, fmt.Errorf("failed to post journal entry: %w", err)
+	}
+
+	// Update vendor balance in AP-1
+	if err := s.vendorsClient.UpdateBalance(ctx, invoice.VendorID, req.EntityID, invoice.TotalAmount); err != nil {
+		return nil, fmt.Errorf("failed to update vendor balance: %w", err)
+	}
 
 	// Mark as posted
 	if err := s.invoiceRepo.MarkAsPosted(ctx, req.ID, req.EntityID, glJournalID, req.PostedBy); err != nil {
@@ -367,12 +441,58 @@ func (s *InvoiceService) RecordPayment(ctx context.Context, req *RecordPaymentRe
 		return nil, err
 	}
 
-	// TODO: Create payment journal entry in GL-2
-	// Debit: Cash/Bank account
-	// Credit: Accounts Payable
+	// Create payment journal entry in GL-2
+	// TODO: Make cash/bank account configurable via entity settings
+	cashAccountID := "1010" // Default Cash account
+	apAccountID := "2000"   // Default Accounts Payable account
 
-	// TODO: Update vendor balance in AP-1
-	// vendor.current_balance -= payment.PaymentAmount
+	paymentDesc := fmt.Sprintf("Payment for invoice %s", invoice.InvoiceNumber)
+	paymentRef := fmt.Sprintf("Payment-%s", payment.ID)
+
+	journalLines := []*client.JournalLineRequest{
+		{
+			LineNumber:  1,
+			AccountID:   cashAccountID,
+			LineType:    "debit",
+			Amount:      req.PaymentAmount,
+			Description: &paymentDesc,
+			Reference:   &paymentRef,
+		},
+		{
+			LineNumber:  2,
+			AccountID:   apAccountID,
+			LineType:    "credit",
+			Amount:      req.PaymentAmount,
+			Description: &paymentDesc,
+			Reference:   &paymentRef,
+		},
+	}
+
+	journalReq := &client.CreateJournalRequest{
+		EntityID:      req.EntityID,
+		JournalNumber: fmt.Sprintf("AP-PMT-%s", payment.ID),
+		JournalDate:   req.PaymentDate,
+		JournalType:   "ap_payment",
+		Description:   req.Notes,
+		Reference:     &paymentRef,
+		Currency:      invoice.Currency,
+		Lines:         journalLines,
+	}
+
+	glJournalID, err := s.journalsClient.CreateJournal(ctx, journalReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create payment journal entry: %w", err)
+	}
+
+	// Post the payment journal entry immediately
+	if err := s.journalsClient.PostJournal(ctx, glJournalID, req.EntityID); err != nil {
+		return nil, fmt.Errorf("failed to post payment journal entry: %w", err)
+	}
+
+	// Update vendor balance in AP-1 (decrease balance)
+	if err := s.vendorsClient.UpdateBalance(ctx, invoice.VendorID, req.EntityID, -req.PaymentAmount); err != nil {
+		return nil, fmt.Errorf("failed to update vendor balance: %w", err)
+	}
 
 	s.log.Info().
 		Str("invoice_id", req.InvoiceID).

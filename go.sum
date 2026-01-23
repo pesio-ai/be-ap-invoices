@@ -22,8 +22,8 @@ github.com/mattn/go-colorable v0.1.13/go.mod h1:7S9/ev0klgBDR4GtXTXX8a3vIGJpMovk
 github.com/mattn/go-isatty v0.0.16/go.mod h1:kYGgaQfpe5nmfYZH+SKPsOc2e4SrIfOl2e/yFXSvRLM=
 github.com/mattn/go-isatty v0.0.19 h1:JITubQf0MOLdlGRuRq+jtsDlekdYPia9ZFsB8h/APPA=
 github.com/mattn/go-isatty v0.0.19/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
-github.com/pesio-ai/be-go-common v0.0.0-20260123134527-9fd98075f18a h1:MxWMHnlD42AZcpHrrFBr/u8yrdslYRDdx+iYUDhBz+Y=
-github.com/pesio-ai/be-go-common v0.0.0-20260123134527-9fd98075f18a/go.mod h1:g342Hp9grSVfFBdEyKxnP2uD88ezIZik50RdFAguq9g=
+github.com/pesio-ai/be-go-common v0.0.0-20260123155529-840595c6605c h1:vn7rRoEIi2zPWBFT350G3hfnLc8aZtjUAIZ87aaU+HY=
+github.com/pesio-ai/be-go-common v0.0.0-20260123155529-840595c6605c/go.mod h1:g342Hp9grSVfFBdEyKxnP2uD88ezIZik50RdFAguq9g=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
