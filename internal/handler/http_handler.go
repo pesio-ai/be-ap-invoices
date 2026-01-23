@@ -37,7 +37,7 @@ func (h *HTTPHandler) CreateInvoice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: Get user ID from JWT token
-	req.CreatedBy = "system"
+	// req.CreatedBy = "system" // Leave empty for NULL
 
 	invoice, err := h.service.CreateInvoice(r.Context(), &req)
 	if err != nil {
@@ -232,7 +232,7 @@ func (h *HTTPHandler) RecordPayment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: Get user ID from JWT token
-	req.CreatedBy = "system"
+	// req.CreatedBy = "system" // Leave empty for NULL
 
 	invoice, err := h.service.RecordPayment(r.Context(), &req)
 	if err != nil {
