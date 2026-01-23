@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -33,7 +34,7 @@ type Invoice struct {
 	PostedDate        *string
 	PostedBy          *string
 	ApprovedBy        *string
-	ApprovedAt        *string
+	ApprovedAt        *time.Time
 	ApprovalNotes     *string
 	PaymentMethod     *string
 	PaymentReference  *string
@@ -44,9 +45,9 @@ type Invoice struct {
 	Notes             *string
 	AttachmentURLs    []string
 	CreatedBy         *string
-	CreatedAt         string
+	CreatedAt         time.Time
 	UpdatedBy         *string
-	UpdatedAt         string
+	UpdatedAt         time.Time
 	Lines             []*InvoiceLine
 }
 
@@ -69,8 +70,8 @@ type InvoiceLine struct {
 	Dimension4  *string
 	ItemCode    *string
 	ItemName    *string
-	CreatedAt   string
-	UpdatedAt   string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // InvoicePayment represents a payment record
@@ -83,7 +84,7 @@ type InvoicePayment struct {
 	PaymentReference *string
 	Notes            *string
 	CreatedBy        *string
-	CreatedAt        string
+	CreatedAt        time.Time
 }
 
 // InvoiceRepository handles invoice data operations
