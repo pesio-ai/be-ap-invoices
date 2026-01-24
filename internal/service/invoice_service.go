@@ -15,18 +15,18 @@ import (
 // InvoiceService handles invoice business logic
 type InvoiceService struct {
 	invoiceRepo    *repository.InvoiceRepository
-	vendorsClient  *client.VendorsClient
-	accountsClient *client.AccountsClient
-	journalsClient *client.JournalsClient
+	vendorsClient  client.VendorsClientInterface
+	accountsClient client.AccountsClientInterface
+	journalsClient client.JournalsClientInterface
 	log            *logger.Logger
 }
 
 // NewInvoiceService creates a new invoice service
 func NewInvoiceService(
 	invoiceRepo *repository.InvoiceRepository,
-	vendorsClient *client.VendorsClient,
-	accountsClient *client.AccountsClient,
-	journalsClient *client.JournalsClient,
+	vendorsClient client.VendorsClientInterface,
+	accountsClient client.AccountsClientInterface,
+	journalsClient client.JournalsClientInterface,
 	log *logger.Logger,
 ) *InvoiceService {
 	return &InvoiceService{
@@ -40,69 +40,69 @@ func NewInvoiceService(
 
 // CreateInvoiceRequest represents a create invoice request
 type CreateInvoiceRequest struct {
-	EntityID        string
-	VendorID        string
-	InvoiceNumber   string
-	InvoiceDate     string
-	DueDate         string
-	InvoiceType     string
-	PaymentTerms    string
-	DiscountPercent *float64
-	DiscountDueDate *string
-	Currency        string
-	PONumber        *string
-	ReferenceNumber *string
-	Description     *string
-	Notes           *string
-	AttachmentURLs  []string
-	Lines           []*InvoiceLineRequest
-	CreatedBy       string
+	EntityID        string                 `json:"entity_id"`
+	VendorID        string                 `json:"vendor_id"`
+	InvoiceNumber   string                 `json:"invoice_number"`
+	InvoiceDate     string                 `json:"invoice_date"`
+	DueDate         string                 `json:"due_date"`
+	InvoiceType     string                 `json:"invoice_type"`
+	PaymentTerms    string                 `json:"payment_terms"`
+	DiscountPercent *float64               `json:"discount_percent,omitempty"`
+	DiscountDueDate *string                `json:"discount_due_date,omitempty"`
+	Currency        string                 `json:"currency"`
+	PONumber        *string                `json:"po_number,omitempty"`
+	ReferenceNumber *string                `json:"reference_number,omitempty"`
+	Description     *string                `json:"description,omitempty"`
+	Notes           *string                `json:"notes,omitempty"`
+	AttachmentURLs  []string               `json:"attachment_urls,omitempty"`
+	Lines           []*InvoiceLineRequest  `json:"lines"`
+	CreatedBy       string                 `json:"created_by,omitempty"`
 }
 
 // InvoiceLineRequest represents an invoice line request
 type InvoiceLineRequest struct {
-	LineNumber  int
-	AccountID   string
-	Description string
-	Quantity    float64
-	UnitPrice   int64
-	LineAmount  int64
-	TaxCode     *string
-	TaxRate     *float64
-	TaxAmount   int64
-	Dimension1  *string
-	Dimension2  *string
-	Dimension3  *string
-	Dimension4  *string
-	ItemCode    *string
-	ItemName    *string
+	LineNumber  int      `json:"line_number"`
+	AccountID   string   `json:"account_id"`
+	Description string   `json:"description"`
+	Quantity    float64  `json:"quantity"`
+	UnitPrice   int64    `json:"unit_price"`
+	LineAmount  int64    `json:"line_amount"`
+	TaxCode     *string  `json:"tax_code,omitempty"`
+	TaxRate     *float64 `json:"tax_rate,omitempty"`
+	TaxAmount   int64    `json:"tax_amount"`
+	Dimension1  *string  `json:"dimension1,omitempty"`
+	Dimension2  *string  `json:"dimension2,omitempty"`
+	Dimension3  *string  `json:"dimension3,omitempty"`
+	Dimension4  *string  `json:"dimension4,omitempty"`
+	ItemCode    *string  `json:"item_code,omitempty"`
+	ItemName    *string  `json:"item_name,omitempty"`
 }
 
 // ApproveInvoiceRequest represents an approve invoice request
 type ApproveInvoiceRequest struct {
-	ID         string
-	EntityID   string
-	ApprovedBy string
-	Notes      *string
+	ID         string  `json:"id"`
+	EntityID   string  `json:"entity_id"`
+	ApprovedBy string  `json:"approved_by"`
+	Notes      *string `json:"notes,omitempty"`
 }
 
 // PostInvoiceRequest represents a post invoice request
 type PostInvoiceRequest struct {
-	ID       string
-	EntityID string
-	PostedBy string
+	ID       string `json:"id"`
+	EntityID string `json:"entity_id"`
+	PostedBy string `json:"posted_by"`
 }
 
 // RecordPaymentRequest represents a record payment request
 type RecordPaymentRequest struct {
-	InvoiceID        string
-	EntityID         string
-	PaymentDate      string
-	PaymentAmount    int64
-	PaymentMethod    *string
-	PaymentReference *string
-	Notes            *string
-	CreatedBy        string
+	InvoiceID        string  `json:"invoice_id"`
+	EntityID         string  `json:"entity_id"`
+	PaymentDate      string  `json:"payment_date"`
+	PaymentAmount    int64   `json:"payment_amount"`
+	PaymentMethod    *string `json:"payment_method,omitempty"`
+	PaymentReference *string `json:"payment_reference,omitempty"`
+	Notes            *string `json:"notes,omitempty"`
+	CreatedBy        string  `json:"created_by,omitempty"`
 }
 
 // CreateInvoice creates a new invoice
@@ -165,18 +165,28 @@ func (s *InvoiceService) CreateInvoice(ctx context.Context, req *CreateInvoiceRe
 		createdBy = &req.CreatedBy
 	}
 
+	// Parse optional discount due date
+	var discountDueDate *time.Time
+	if req.DiscountDueDate != nil && *req.DiscountDueDate != "" {
+		parsedDiscountDueDate, err := time.Parse("2006-01-02", *req.DiscountDueDate)
+		if err != nil {
+			return nil, errors.InvalidInput("discount_due_date", "invalid date format, expected YYYY-MM-DD")
+		}
+		discountDueDate = &parsedDiscountDueDate
+	}
+
 	// Build invoice
 	invoice := &repository.Invoice{
 		EntityID:        req.EntityID,
 		VendorID:        req.VendorID,
 		InvoiceNumber:   req.InvoiceNumber,
-		InvoiceDate:     req.InvoiceDate,
-		DueDate:         req.DueDate,
+		InvoiceDate:     invoiceDate,
+		DueDate:         dueDate,
 		InvoiceType:     invoiceType,
 		Status:          "draft",
 		PaymentTerms:    req.PaymentTerms,
 		DiscountPercent: req.DiscountPercent,
-		DiscountDueDate: req.DiscountDueDate,
+		DiscountDueDate: discountDueDate,
 		Currency:        strings.ToUpper(req.Currency),
 		PONumber:        req.PONumber,
 		ReferenceNumber: req.ReferenceNumber,
@@ -354,11 +364,16 @@ func (s *InvoiceService) PostInvoice(ctx context.Context, req *PostInvoiceReques
 
 	// Credit line to Accounts Payable
 	// TODO: Make AP account configurable via entity settings
-	apAccountID := "2000" // Default Accounts Payable account
+	apAccountCode := "2000" // Default Accounts Payable account
+	apAccount, err := s.accountsClient.GetAccountByCode(ctx, apAccountCode, req.EntityID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get AP account: %w", err)
+	}
+
 	apDesc := fmt.Sprintf("Invoice %s from vendor %s", invoice.InvoiceNumber, invoice.VendorID)
 	journalLines = append(journalLines, &client.JournalLineRequest{
 		LineNumber:  len(invoice.Lines) + 1,
-		AccountID:   apAccountID,
+		AccountID:   apAccount.ID,
 		LineType:    "credit",
 		Amount:      invoice.TotalAmount,
 		Description: &apDesc,
@@ -369,7 +384,7 @@ func (s *InvoiceService) PostInvoice(ctx context.Context, req *PostInvoiceReques
 	journalReq := &client.CreateJournalRequest{
 		EntityID:      req.EntityID,
 		JournalNumber: fmt.Sprintf("AP-INV-%s", invoice.InvoiceNumber),
-		JournalDate:   invoice.InvoiceDate,
+		JournalDate:   invoice.InvoiceDate.Format("2006-01-02"),
 		JournalType:   "ap_invoice",
 		Description:   invoice.Description,
 		Reference:     &invoice.InvoiceNumber,
@@ -439,8 +454,9 @@ func (s *InvoiceService) RecordPayment(ctx context.Context, req *RecordPaymentRe
 			fmt.Sprintf("payment amount (%d) exceeds amount due (%d)", req.PaymentAmount, invoice.AmountDue))
 	}
 
-	// Validate payment date
-	if _, err := time.Parse("2006-01-02", req.PaymentDate); err != nil {
+	// Validate and parse payment date
+	paymentDate, err := time.Parse("2006-01-02", req.PaymentDate)
+	if err != nil {
 		return nil, errors.InvalidInput("payment_date", "invalid date format, expected YYYY-MM-DD")
 	}
 
@@ -453,7 +469,7 @@ func (s *InvoiceService) RecordPayment(ctx context.Context, req *RecordPaymentRe
 	// Record payment
 	payment := &repository.InvoicePayment{
 		InvoiceID:        req.InvoiceID,
-		PaymentDate:      req.PaymentDate,
+		PaymentDate:      paymentDate,
 		PaymentAmount:    req.PaymentAmount,
 		PaymentMethod:    req.PaymentMethod,
 		PaymentReference: req.PaymentReference,
@@ -467,8 +483,19 @@ func (s *InvoiceService) RecordPayment(ctx context.Context, req *RecordPaymentRe
 
 	// Create payment journal entry in GL-2
 	// TODO: Make cash/bank account configurable via entity settings
-	cashAccountID := "1010" // Default Cash account
-	apAccountID := "2000"   // Default Accounts Payable account
+	cashAccountCode := "1010" // Default Cash account
+	apAccountCode := "2000"    // Default Accounts Payable account
+
+	// Look up account IDs by code
+	cashAccount, err := s.accountsClient.GetAccountByCode(ctx, cashAccountCode, req.EntityID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cash account: %w", err)
+	}
+
+	apAccount, err := s.accountsClient.GetAccountByCode(ctx, apAccountCode, req.EntityID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get AP account: %w", err)
+	}
 
 	paymentDesc := fmt.Sprintf("Payment for invoice %s", invoice.InvoiceNumber)
 	paymentRef := fmt.Sprintf("Payment-%s", payment.ID)
@@ -476,7 +503,7 @@ func (s *InvoiceService) RecordPayment(ctx context.Context, req *RecordPaymentRe
 	journalLines := []*client.JournalLineRequest{
 		{
 			LineNumber:  1,
-			AccountID:   cashAccountID,
+			AccountID:   cashAccount.ID,
 			LineType:    "debit",
 			Amount:      req.PaymentAmount,
 			Description: &paymentDesc,
@@ -484,7 +511,7 @@ func (s *InvoiceService) RecordPayment(ctx context.Context, req *RecordPaymentRe
 		},
 		{
 			LineNumber:  2,
-			AccountID:   apAccountID,
+			AccountID:   apAccount.ID,
 			LineType:    "credit",
 			Amount:      req.PaymentAmount,
 			Description: &paymentDesc,
@@ -548,8 +575,14 @@ func (s *InvoiceService) SubmitForApproval(ctx context.Context, id, entityID, su
 		return errors.InvalidInput("lines", "invoice must have at least 1 line")
 	}
 
+	// Convert empty string to NULL for submitted_by
+	var submittedByPtr *string
+	if submittedBy != "" {
+		submittedByPtr = &submittedBy
+	}
+
 	// Update status
-	if err := s.invoiceRepo.UpdateStatus(ctx, id, entityID, "pending_approval", &submittedBy); err != nil {
+	if err := s.invoiceRepo.UpdateStatus(ctx, id, entityID, "pending_approval", submittedByPtr); err != nil {
 		return err
 	}
 

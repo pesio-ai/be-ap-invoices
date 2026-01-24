@@ -4,7 +4,9 @@ go 1.25.0
 
 require (
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/pesio-ai/be-go-common v0.0.0-20260123155529-840595c6605c
+	github.com/pesio-ai/be-go-common v0.0.0-20260124020211-8d03e3eed225
+	github.com/pesio-ai/be-go-proto v0.0.0-00010101000000-000000000000
+	google.golang.org/grpc v1.78.0
 )
 
 require (
@@ -15,10 +17,12 @@ require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/rs/zerolog v1.34.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda // indirect
-	google.golang.org/grpc v1.78.0 // indirect
-	google.golang.org/protobuf v1.36.10 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+replace github.com/pesio-ai/be-go-proto => ../be-go-proto

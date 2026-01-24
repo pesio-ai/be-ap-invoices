@@ -2,8 +2,8 @@ package repository
 
 import (
 	"context"
-	"time"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pesio-ai/be-go-common/database"
@@ -12,73 +12,73 @@ import (
 
 // Invoice represents an invoice header
 type Invoice struct {
-	ID                string
-	EntityID          string
-	VendorID          string
-	InvoiceNumber     string
-	InvoiceDate       string
-	DueDate           string
-	InvoiceType       string
-	Status            string
-	PaymentTerms      string
-	DiscountPercent   *float64
-	DiscountDueDate   *string
-	Currency          string
-	Subtotal          int64
-	TaxAmount         int64
-	TotalAmount       int64
-	AmountPaid        int64
-	AmountDue         int64
-	PostedToGL        bool
-	GLJournalID       *string
-	PostedDate        *string
-	PostedBy          *string
-	ApprovedBy        *string
-	ApprovedAt        *time.Time
-	ApprovalNotes     *string
-	PaymentMethod     *string
-	PaymentReference  *string
-	PaymentDate       *string
-	PONumber          *string
-	ReferenceNumber   *string
-	Description       *string
-	Notes             *string
-	AttachmentURLs    []string
-	CreatedBy         *string
-	CreatedAt         time.Time
-	UpdatedBy         *string
-	UpdatedAt         time.Time
-	Lines             []*InvoiceLine
+	ID                string         `json:"id"`
+	EntityID          string         `json:"entity_id"`
+	VendorID          string         `json:"vendor_id"`
+	InvoiceNumber     string         `json:"invoice_number"`
+	InvoiceDate       time.Time      `json:"invoice_date"`
+	DueDate           time.Time      `json:"due_date"`
+	InvoiceType       string         `json:"invoice_type"`
+	Status            string         `json:"status"`
+	PaymentTerms      string         `json:"payment_terms"`
+	DiscountPercent   *float64       `json:"discount_percent,omitempty"`
+	DiscountDueDate   *time.Time     `json:"discount_due_date,omitempty"`
+	Currency          string         `json:"currency"`
+	Subtotal          int64          `json:"subtotal"`
+	TaxAmount         int64          `json:"tax_amount"`
+	TotalAmount       int64          `json:"total_amount"`
+	AmountPaid        int64          `json:"amount_paid"`
+	AmountDue         int64          `json:"amount_due"`
+	PostedToGL        bool           `json:"posted_to_gl"`
+	GLJournalID       *string        `json:"gl_journal_id,omitempty"`
+	PostedDate        *time.Time     `json:"posted_date,omitempty"`
+	PostedBy          *string        `json:"posted_by,omitempty"`
+	ApprovedBy        *string        `json:"approved_by,omitempty"`
+	ApprovedAt        *time.Time     `json:"approved_at,omitempty"`
+	ApprovalNotes     *string        `json:"approval_notes,omitempty"`
+	PaymentMethod     *string        `json:"payment_method,omitempty"`
+	PaymentReference  *string        `json:"payment_reference,omitempty"`
+	PaymentDate       *time.Time     `json:"payment_date,omitempty"`
+	PONumber          *string        `json:"po_number,omitempty"`
+	ReferenceNumber   *string        `json:"reference_number,omitempty"`
+	Description       *string        `json:"description,omitempty"`
+	Notes             *string        `json:"notes,omitempty"`
+	AttachmentURLs    []string       `json:"attachment_urls,omitempty"`
+	CreatedBy         *string        `json:"created_by,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedBy         *string        `json:"updated_by,omitempty"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+	Lines             []*InvoiceLine `json:"lines,omitempty"`
 }
 
 // InvoiceLine represents an invoice line item
 type InvoiceLine struct {
-	ID          string
-	InvoiceID   string
-	LineNumber  int
-	AccountID   string
-	Description string
-	Quantity    float64
-	UnitPrice   int64
-	LineAmount  int64
-	TaxCode     *string
-	TaxRate     *float64
-	TaxAmount   int64
-	Dimension1  *string
-	Dimension2  *string
-	Dimension3  *string
-	Dimension4  *string
-	ItemCode    *string
-	ItemName    *string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          string   `json:"id"`
+	InvoiceID   string   `json:"invoice_id"`
+	LineNumber  int      `json:"line_number"`
+	AccountID   string   `json:"account_id"`
+	Description string   `json:"description"`
+	Quantity    float64  `json:"quantity"`
+	UnitPrice   int64    `json:"unit_price"`
+	LineAmount  int64    `json:"line_amount"`
+	TaxCode     *string  `json:"tax_code,omitempty"`
+	TaxRate     *float64 `json:"tax_rate,omitempty"`
+	TaxAmount   int64    `json:"tax_amount"`
+	Dimension1  *string  `json:"dimension1,omitempty"`
+	Dimension2  *string  `json:"dimension2,omitempty"`
+	Dimension3  *string    `json:"dimension3,omitempty"`
+	Dimension4  *string    `json:"dimension4,omitempty"`
+	ItemCode    *string    `json:"item_code,omitempty"`
+	ItemName    *string    `json:"item_name,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // InvoicePayment represents a payment record
 type InvoicePayment struct {
 	ID               string
 	InvoiceID        string
-	PaymentDate      string
+	PaymentDate      time.Time
 	PaymentAmount    int64
 	PaymentMethod    *string
 	PaymentReference *string
@@ -197,8 +197,10 @@ func (r *InvoiceRepository) GetByID(ctx context.Context, id, entityID string) (*
 	invoice := &Invoice{}
 
 	query := `
-		SELECT id, entity_id, vendor_id, invoice_number, invoice_date, due_date,
-		       invoice_type, status, payment_terms, discount_percent, discount_due_date,
+		SELECT id, entity_id, vendor_id, invoice_number,
+		       invoice_date, due_date,
+		       invoice_type, status, payment_terms, discount_percent,
+		       discount_due_date,
 		       currency, subtotal, tax_amount, total_amount, amount_paid, amount_due,
 		       posted_to_gl, gl_journal_id, posted_date, posted_by,
 		       approved_by, approved_at, approval_notes,
@@ -322,8 +324,10 @@ func (r *InvoiceRepository) GetLines(ctx context.Context, invoiceID string) ([]*
 // List retrieves invoices with filtering and pagination
 func (r *InvoiceRepository) List(ctx context.Context, entityID string, vendorID, status *string, fromDate, toDate *string, limit, offset int) ([]*Invoice, int64, error) {
 	query := `
-		SELECT id, entity_id, vendor_id, invoice_number, invoice_date, due_date,
-		       invoice_type, status, payment_terms, discount_percent, discount_due_date,
+		SELECT id, entity_id, vendor_id, invoice_number,
+		       invoice_date, due_date,
+		       invoice_type, status, payment_terms, discount_percent,
+		       discount_due_date,
 		       currency, subtotal, tax_amount, total_amount, amount_paid, amount_due,
 		       posted_to_gl, gl_journal_id, posted_date, posted_by,
 		       approved_by, approved_at, approval_notes,

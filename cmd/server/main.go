@@ -68,16 +68,33 @@ func main() {
 	// Initialize repositories
 	invoiceRepo := repository.NewInvoiceRepository(db)
 
-	// Initialize service clients
-	vendorsClient := client.NewVendorsClient(getEnv("VENDORS_SERVICE_URL", "http://localhost:8084"))
-	accountsClient := client.NewAccountsClient(getEnv("ACCOUNTS_SERVICE_URL", "http://localhost:8082"))
-	journalsClient := client.NewJournalsClient(getEnv("JOURNALS_SERVICE_URL", "http://localhost:8083"))
+	// Initialize gRPC service clients
+	vendorsGrpcAddr := getEnv("VENDORS_GRPC_URL", "localhost:9084")
+	vendorsClient, err := client.NewVendorsGRPCClient(vendorsGrpcAddr)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to create vendors gRPC client")
+	}
+	defer vendorsClient.Close()
+
+	accountsGrpcAddr := getEnv("ACCOUNTS_GRPC_URL", "localhost:9082")
+	accountsClient, err := client.NewAccountsGRPCClient(accountsGrpcAddr)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to create accounts gRPC client")
+	}
+	defer accountsClient.Close()
+
+	journalsGrpcAddr := getEnv("JOURNALS_GRPC_URL", "localhost:9083")
+	journalsClient, err := client.NewJournalsGRPCClient(journalsGrpcAddr)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to create journals gRPC client")
+	}
+	defer journalsClient.Close()
 
 	log.Info().
-		Str("vendors_service", getEnv("VENDORS_SERVICE_URL", "http://localhost:8084")).
-		Str("accounts_service", getEnv("ACCOUNTS_SERVICE_URL", "http://localhost:8082")).
-		Str("journals_service", getEnv("JOURNALS_SERVICE_URL", "http://localhost:8083")).
-		Msg("Service clients initialized")
+		Str("vendors_grpc", vendorsGrpcAddr).
+		Str("accounts_grpc", accountsGrpcAddr).
+		Str("journals_grpc", journalsGrpcAddr).
+		Msg("gRPC service clients initialized")
 
 	// Initialize services
 	invoiceService := service.NewInvoiceService(invoiceRepo, vendorsClient, accountsClient, journalsClient, log)

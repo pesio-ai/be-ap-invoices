@@ -154,10 +154,10 @@ func (h *HTTPHandler) SubmitForApproval(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// TODO: Get user ID from JWT token
-	submittedBy := "system"
+	// TODO: Get user ID from JWT token once PLT-1 (Identity/Authentication) is implemented
+	submittedBy := ""
 
-	if err := h.service.SubmitForApproval(r.Context(), req.ID, req.EntityID, submittedBy); err != nil {
+	if err := h.service.SubmitForApproval(r.Context(), req.ID, req.EntityID, submittedBy); err != nil{
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -179,8 +179,8 @@ func (h *HTTPHandler) ApproveInvoice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Get user ID from JWT token
-	req.ApprovedBy = "system"
+	// TODO: Get user ID from JWT token once PLT-1 (Identity/Authentication) is implemented
+	req.ApprovedBy = ""
 
 	invoice, err := h.service.ApproveInvoice(r.Context(), &req)
 	if err != nil {
@@ -205,8 +205,8 @@ func (h *HTTPHandler) PostInvoice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Get user ID from JWT token
-	req.PostedBy = "system"
+	// TODO: Get user ID from JWT token once PLT-1 (Identity/Authentication) is implemented
+	req.PostedBy = ""
 
 	invoice, err := h.service.PostInvoice(r.Context(), &req)
 	if err != nil {

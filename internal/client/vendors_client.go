@@ -19,12 +19,6 @@ func NewVendorsClient(baseURL string) *VendorsClient {
 	}
 }
 
-// ValidateVendorResponse represents the vendor validation response
-type ValidateVendorResponse struct {
-	Valid   bool   `json:"valid"`
-	Message string `json:"message"`
-}
-
 // ValidateVendor validates a vendor
 func (c *VendorsClient) ValidateVendor(ctx context.Context, vendorID, entityID string) (bool, string, error) {
 	path := fmt.Sprintf("/api/v1/vendors/validate?id=%s&entity_id=%s", vendorID, entityID)
