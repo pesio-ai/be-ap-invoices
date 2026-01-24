@@ -159,6 +159,12 @@ func (s *InvoiceService) CreateInvoice(ctx context.Context, req *CreateInvoiceRe
 		return nil, errors.InvalidInput("discount_percent", "discount must be between 0 and 100")
 	}
 
+	// Convert empty string to NULL for CreatedBy
+	var createdBy *string
+	if req.CreatedBy != "" {
+		createdBy = &req.CreatedBy
+	}
+
 	// Build invoice
 	invoice := &repository.Invoice{
 		EntityID:        req.EntityID,
@@ -177,7 +183,7 @@ func (s *InvoiceService) CreateInvoice(ctx context.Context, req *CreateInvoiceRe
 		Description:     req.Description,
 		Notes:           req.Notes,
 		AttachmentURLs:  req.AttachmentURLs,
-		CreatedBy:       &req.CreatedBy,
+		CreatedBy:       createdBy,
 		Lines:           make([]*repository.InvoiceLine, 0),
 	}
 
@@ -286,8 +292,14 @@ func (s *InvoiceService) ApproveInvoice(ctx context.Context, req *ApproveInvoice
 	// TODO: Validate vendor is still active
 	// TODO: Validate all accounts are still active and allow posting
 
+	// Convert empty string to NULL for ApprovedBy
+	var approvedBy *string
+	if req.ApprovedBy != "" {
+		approvedBy = &req.ApprovedBy
+	}
+
 	// Approve invoice
-	if err := s.invoiceRepo.Approve(ctx, req.ID, req.EntityID, req.ApprovedBy, req.Notes); err != nil {
+	if err := s.invoiceRepo.Approve(ctx, req.ID, req.EntityID, approvedBy, req.Notes); err != nil {
 		return nil, err
 	}
 
@@ -380,8 +392,14 @@ func (s *InvoiceService) PostInvoice(ctx context.Context, req *PostInvoiceReques
 		return nil, fmt.Errorf("failed to update vendor balance: %w", err)
 	}
 
+	// Convert empty string to NULL for PostedBy
+	var postedBy *string
+	if req.PostedBy != "" {
+		postedBy = &req.PostedBy
+	}
+
 	// Mark as posted
-	if err := s.invoiceRepo.MarkAsPosted(ctx, req.ID, req.EntityID, glJournalID, req.PostedBy); err != nil {
+	if err := s.invoiceRepo.MarkAsPosted(ctx, req.ID, req.EntityID, glJournalID, postedBy); err != nil {
 		return nil, err
 	}
 
@@ -426,6 +444,12 @@ func (s *InvoiceService) RecordPayment(ctx context.Context, req *RecordPaymentRe
 		return nil, errors.InvalidInput("payment_date", "invalid date format, expected YYYY-MM-DD")
 	}
 
+	// Convert empty string to NULL for CreatedBy
+	var createdBy *string
+	if req.CreatedBy != "" {
+		createdBy = &req.CreatedBy
+	}
+
 	// Record payment
 	payment := &repository.InvoicePayment{
 		InvoiceID:        req.InvoiceID,
@@ -434,7 +458,7 @@ func (s *InvoiceService) RecordPayment(ctx context.Context, req *RecordPaymentRe
 		PaymentMethod:    req.PaymentMethod,
 		PaymentReference: req.PaymentReference,
 		Notes:            req.Notes,
-		CreatedBy:        &req.CreatedBy,
+		CreatedBy:        createdBy,
 	}
 
 	if err := s.invoiceRepo.RecordPayment(ctx, payment); err != nil {

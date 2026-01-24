@@ -462,7 +462,7 @@ func (r *InvoiceRepository) UpdateStatus(ctx context.Context, id, entityID, stat
 }
 
 // Approve approves an invoice
-func (r *InvoiceRepository) Approve(ctx context.Context, id, entityID, approvedBy string, notes *string) error {
+func (r *InvoiceRepository) Approve(ctx context.Context, id, entityID string, approvedBy *string, notes *string) error {
 	query := `
 		UPDATE invoices
 		SET status = 'approved'::invoice_status,
@@ -488,7 +488,7 @@ func (r *InvoiceRepository) Approve(ctx context.Context, id, entityID, approvedB
 }
 
 // MarkAsPosted marks invoice as posted to GL
-func (r *InvoiceRepository) MarkAsPosted(ctx context.Context, id, entityID, glJournalID, postedBy string) error {
+func (r *InvoiceRepository) MarkAsPosted(ctx context.Context, id, entityID, glJournalID string, postedBy *string) error {
 	query := `
 		UPDATE invoices
 		SET status = 'posted'::invoice_status,
