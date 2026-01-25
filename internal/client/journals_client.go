@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pesio-ai/be-go-common/httpclient"
+	"github.com/pesio-ai/be-lib-common/httpclient"
 )
 
 // JournalsClient is a client for the journals service (GL-2)

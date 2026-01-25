@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	pb "github.com/pesio-ai/be-go-proto/gen/go/ap"
+	pb "github.com/pesio-ai/be-lib-proto/gen/go/ap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

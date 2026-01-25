@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/pesio-ai/be-go-common/logger"
+	"github.com/pesio-ai/be-lib-common/logger"
 	"github.com/pesio-ai/be-invoices-service/internal/service"
 )
 

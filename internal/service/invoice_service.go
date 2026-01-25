@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pesio-ai/be-go-common/errors"
-	"github.com/pesio-ai/be-go-common/logger"
+	"github.com/pesio-ai/be-lib-common/errors"
+	"github.com/pesio-ai/be-lib-common/logger"
 	"github.com/pesio-ai/be-invoices-service/internal/client"
 	"github.com/pesio-ai/be-invoices-service/internal/repository"
 )

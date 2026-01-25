@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pesio-ai/be-go-common/httpclient"
+	"github.com/pesio-ai/be-lib-common/httpclient"
 )
 
 // AccountsClient is a client for the accounts service (GL-1)
