@@ -25,6 +25,6 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace github.com/pesio-ai/be-lib-common => ../be-go-common
+replace github.com/pesio-ai/be-lib-common => ../be-lib-common
 
 replace github.com/pesio-ai/be-go-proto => ../be-go-proto
