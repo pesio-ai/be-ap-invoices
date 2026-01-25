@@ -53,3 +53,4 @@ __debug_bin
 
 # Air (live reload) temporary files
 tmp/
+server
