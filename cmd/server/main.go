@@ -3,12 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
+
+	pb "github.com/pesio-ai/be-lib-proto/gen/go/ap"
 	"github.com/pesio-ai/be-lib-common/config"
 	"github.com/pesio-ai/be-lib-common/database"
 	"github.com/pesio-ai/be-lib-common/logger"
@@ -151,6 +156,26 @@ func main() {
 		}
 	}()
 
+	// Start gRPC server
+	grpcPort := getEnvInt("GRPC_PORT", 9085)
+	grpcHandler := handler.NewGRPCHandler(invoiceService, log.Logger)
+
+	grpcServer := grpc.NewServer()
+	pb.RegisterInvoicesServiceServer(grpcServer, grpcHandler)
+	reflection.Register(grpcServer) // Enable reflection for debugging
+
+	grpcListener, err := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to create gRPC listener")
+	}
+
+	go func() {
+		log.Info().Int("port", grpcPort).Msg("Starting gRPC server")
+		if err := grpcServer.Serve(grpcListener); err != nil {
+			log.Error().Err(err).Msg("gRPC server failed")
+		}
+	}()
+
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -165,6 +190,9 @@ func main() {
 		log.Error().Err(err).Msg("HTTP server shutdown failed")
 	}
 
+	// Stop gRPC server gracefully
+	grpcServer.GracefulStop()
+
 	log.Info().Msg("Server stopped")
 }
 
@@ -172,6 +200,18 @@ func main() {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+// getEnvInt gets an environment variable as int or returns a default value
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		var result int
+		_, err := fmt.Sscanf(value, "%d", &result)
+		if err == nil {
+			return result
+		}
 	}
 	return defaultValue
 }

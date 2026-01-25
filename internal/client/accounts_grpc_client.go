@@ -64,8 +64,8 @@ func (c *AccountsGRPCClient) GetAccount(ctx context.Context, accountID, entityID
 		EntityID:      resp.EntityId,
 		Code:          resp.Code,
 		Name:          resp.Name,
-		AccountType:   resp.AccountType,
-		NormalBalance: resp.NormalBalance,
+		AccountType:   accountTypeToString(resp.AccountType),
+		NormalBalance: normalBalanceToString(resp.NormalBalance),
 		IsActive:      resp.IsActive,
 		AllowPosting:  resp.AllowPosting,
 		Currency:      resp.Currency,
@@ -76,7 +76,7 @@ func (c *AccountsGRPCClient) GetAccount(ctx context.Context, accountID, entityID
 func (c *AccountsGRPCClient) ListAccounts(ctx context.Context, entityID, accountType string, page, pageSize int) ([]*Account, int64, error) {
 	resp, err := c.client.ListAccounts(ctx, &pb.ListAccountsRequest{
 		EntityId:    entityID,
-		AccountType: accountType,
+		AccountType: stringToAccountType(accountType),
 		Page:        int32(page),
 		PageSize:    int32(pageSize),
 	})
@@ -91,8 +91,8 @@ func (c *AccountsGRPCClient) ListAccounts(ctx context.Context, entityID, account
 			EntityID:      acc.EntityId,
 			Code:          acc.Code,
 			Name:          acc.Name,
-			AccountType:   acc.AccountType,
-			NormalBalance: acc.NormalBalance,
+			AccountType:   accountTypeToString(acc.AccountType),
+			NormalBalance: normalBalanceToString(acc.NormalBalance),
 			IsActive:      acc.IsActive,
 			AllowPosting:  acc.AllowPosting,
 			Currency:      acc.Currency,
@@ -118,4 +118,51 @@ func (c *AccountsGRPCClient) GetAccountByCode(ctx context.Context, code, entityI
 	}
 
 	return nil, fmt.Errorf("account not found with code %s", code)
+}
+
+// Helper functions for type conversion
+
+func accountTypeToString(t pb.AccountType) string {
+	switch t {
+	case pb.AccountType_ACCOUNT_TYPE_ASSET:
+		return "asset"
+	case pb.AccountType_ACCOUNT_TYPE_LIABILITY:
+		return "liability"
+	case pb.AccountType_ACCOUNT_TYPE_EQUITY:
+		return "equity"
+	case pb.AccountType_ACCOUNT_TYPE_REVENUE:
+		return "revenue"
+	case pb.AccountType_ACCOUNT_TYPE_EXPENSE:
+		return "expense"
+	default:
+		return ""
+	}
+}
+
+func stringToAccountType(s string) pb.AccountType {
+	switch s {
+	case "asset":
+		return pb.AccountType_ACCOUNT_TYPE_ASSET
+	case "liability":
+		return pb.AccountType_ACCOUNT_TYPE_LIABILITY
+	case "equity":
+		return pb.AccountType_ACCOUNT_TYPE_EQUITY
+	case "revenue":
+		return pb.AccountType_ACCOUNT_TYPE_REVENUE
+	case "expense":
+		return pb.AccountType_ACCOUNT_TYPE_EXPENSE
+	default:
+		return pb.AccountType_ACCOUNT_TYPE_UNSPECIFIED
+	}
+}
+
+func normalBalanceToString(b pb.NormalBalance) string {
+	switch b {
+	case pb.NormalBalance_NORMAL_BALANCE_DEBIT:
+		return "debit"
+	case pb.NormalBalance_NORMAL_BALANCE_CREDIT:
+		return "credit"
+	default:
+		return ""
+	}
 }
