@@ -13,10 +13,10 @@ import (
 	"github.com/pesio-ai/be-lib-common/database"
 	"github.com/pesio-ai/be-lib-common/logger"
 	"github.com/pesio-ai/be-lib-common/middleware"
-	"github.com/pesio-ai/be-invoices-service/internal/client"
-	"github.com/pesio-ai/be-invoices-service/internal/handler"
-	"github.com/pesio-ai/be-invoices-service/internal/repository"
-	"github.com/pesio-ai/be-invoices-service/internal/service"
+	"github.com/pesio-ai/be-ap-invoices/internal/client"
+	"github.com/pesio-ai/be-ap-invoices/internal/handler"
+	"github.com/pesio-ai/be-ap-invoices/internal/repository"
+	"github.com/pesio-ai/be-ap-invoices/internal/service"
 )
 
 func main() {

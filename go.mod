@@ -1,4 +1,4 @@
-module github.com/pesio-ai/be-invoices-service
+module github.com/pesio-ai/be-ap-invoices
 
 go 1.25.0
 

@@ -8,8 +8,8 @@ import (
 
 	"github.com/pesio-ai/be-lib-common/errors"
 	"github.com/pesio-ai/be-lib-common/logger"
-	"github.com/pesio-ai/be-invoices-service/internal/client"
-	"github.com/pesio-ai/be-invoices-service/internal/repository"
+	"github.com/pesio-ai/be-ap-invoices/internal/client"
+	"github.com/pesio-ai/be-ap-invoices/internal/repository"
 )
 
 // InvoiceService handles invoice business logic
