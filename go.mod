@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/pesio-ai/be-lib-common v0.0.0-20260124020211-8d03e3eed225
+	github.com/pesio-ai/be-lib-common v0.0.0-00010101000000-000000000000
 	github.com/pesio-ai/be-lib-proto v0.0.0-20260124164652-9c290ae7759a
 	github.com/rs/zerolog v1.34.0
 	google.golang.org/grpc v1.78.0
