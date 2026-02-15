@@ -16,6 +16,7 @@ import (
 	pb "github.com/pesio-ai/be-lib-proto/gen/go/ap"
 	"github.com/pesio-ai/be-lib-common/config"
 	"github.com/pesio-ai/be-lib-common/database"
+	"github.com/pesio-ai/be-lib-common/health"
 	"github.com/pesio-ai/be-lib-common/logger"
 	"github.com/pesio-ai/be-lib-common/middleware"
 	"github.com/pesio-ai/be-ap-invoices/internal/client"
@@ -109,10 +110,8 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Health check
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"healthy"}`))
-	})
+	healthHandler := health.NewHandler("be-ap-invoices", cfg.Service.Version)
+	mux.Handle("/health", healthHandler)
 
 	// Invoice routes
 	mux.HandleFunc("/api/v1/invoices", func(w http.ResponseWriter, r *http.Request) {
