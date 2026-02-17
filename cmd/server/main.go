@@ -20,6 +20,7 @@ import (
 	"github.com/pesio-ai/be-lib-common/health"
 	"github.com/pesio-ai/be-lib-common/logger"
 	"github.com/pesio-ai/be-lib-common/middleware"
+	natsclient "github.com/pesio-ai/be-lib-common/nats"
 	identitypb "github.com/pesio-ai/be-lib-proto/gen/go/platform"
 	"github.com/pesio-ai/be-ap-invoices/internal/client"
 	"github.com/pesio-ai/be-ap-invoices/internal/handler"
@@ -125,6 +126,22 @@ func main() {
 		Str("identity_grpc", identityGrpcAddr).
 		Msg("gRPC service clients initialized")
 
+	// Initialize NATS client for notifications (non-fatal — service runs without it)
+	natsURL := getEnv("NATS_URL", "nats://localhost:4222")
+	var notificationPublisher *client.NotificationPublisher
+	natsClient, natsErr := natsclient.New(natsclient.Config{
+		URL:           natsURL,
+		MaxReconnects: 5,
+		StreamName:    "NOTIFICATIONS",
+	})
+	if natsErr != nil {
+		log.Warn().Err(natsErr).Str("nats_url", natsURL).Msg("NATS unavailable — notifications disabled")
+	} else {
+		defer natsClient.Close()
+		notificationPublisher = client.NewNotificationPublisher(natsClient, log.Logger)
+		log.Info().Str("nats_url", natsURL).Msg("NATS client initialized")
+	}
+
 	// Initialize services
 	invoiceService := service.NewInvoiceService(invoiceRepo, vendorsClient, accountsClient, journalsClient, log)
 	routingService := service.NewApprovalRoutingService(rulesRepo, workflowRepo, stepsRepo, auditRepo, invoiceRepo, identityClient, log)
@@ -181,7 +198,7 @@ func main() {
 
 	// Start gRPC server
 	grpcPort := getEnvInt("GRPC_PORT", 9085)
-	grpcHandler := handler.NewGRPCHandler(invoiceService, routingService, log.Logger)
+	grpcHandler := handler.NewGRPCHandler(invoiceService, routingService, notificationPublisher, log.Logger)
 
 	authInterceptor := auth.NewInterceptor(identityProtoClient, log)
 	grpcServer := grpc.NewServer(

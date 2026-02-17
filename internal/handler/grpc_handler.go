@@ -12,6 +12,7 @@ import (
 	commonpb "github.com/pesio-ai/be-lib-proto/gen/go/common"
 	pb "github.com/pesio-ai/be-lib-proto/gen/go/ap"
 	"github.com/pesio-ai/be-lib-common/auth"
+	"github.com/pesio-ai/be-ap-invoices/internal/client"
 	"github.com/pesio-ai/be-ap-invoices/internal/repository"
 	"github.com/pesio-ai/be-ap-invoices/internal/service"
 )
@@ -19,17 +20,19 @@ import (
 // GRPCHandler implements the InvoicesService gRPC interface
 type GRPCHandler struct {
 	pb.UnimplementedInvoicesServiceServer
-	invoiceService  *service.InvoiceService
-	routingService  *service.ApprovalRoutingService
-	logger          zerolog.Logger
+	invoiceService        *service.InvoiceService
+	routingService        *service.ApprovalRoutingService
+	notificationPublisher *client.NotificationPublisher
+	logger                zerolog.Logger
 }
 
 // NewGRPCHandler creates a new gRPC handler
-func NewGRPCHandler(invoiceService *service.InvoiceService, routingService *service.ApprovalRoutingService, logger zerolog.Logger) *GRPCHandler {
+func NewGRPCHandler(invoiceService *service.InvoiceService, routingService *service.ApprovalRoutingService, notificationPublisher *client.NotificationPublisher, logger zerolog.Logger) *GRPCHandler {
 	return &GRPCHandler{
-		invoiceService:  invoiceService,
-		routingService:  routingService,
-		logger:          logger.With().Str("handler", "grpc").Logger(),
+		invoiceService:        invoiceService,
+		routingService:        routingService,
+		notificationPublisher: notificationPublisher,
+		logger:                logger.With().Str("handler", "grpc").Logger(),
 	}
 }
 
@@ -245,7 +248,7 @@ func (h *GRPCHandler) SubmitForApproval(ctx context.Context, req *pb.SubmitForAp
 	if err != nil {
 		h.logger.Warn().Err(err).Str("invoice_id", req.Id).Msg("Could not fetch invoice for workflow creation")
 	} else {
-		wf, _, err := h.routingService.CreateApprovalWorkflow(ctx, invoice, uid)
+		wf, steps, err := h.routingService.CreateApprovalWorkflow(ctx, invoice, uid)
 		if err != nil {
 			h.logger.Warn().Err(err).Str("invoice_id", req.Id).Msg("Could not create approval workflow")
 		} else {
@@ -254,6 +257,24 @@ func (h *GRPCHandler) SubmitForApproval(ctx context.Context, req *pb.SubmitForAp
 				Str("workflow_id", wf.ID).
 				Int("total_steps", wf.TotalSteps).
 				Msg("Approval workflow created")
+
+			// Notify first approvers
+			if h.notificationPublisher != nil && len(steps) > 0 {
+				firstStep := steps[0]
+				var recipients []string
+				if firstStep.AssignedTo != nil {
+					recipients = []string{*firstStep.AssignedTo}
+				}
+				h.notificationPublisher.PublishInvoiceEvent(ctx, "invoice_submitted",
+					req.Id, req.EntityId, uid, recipients,
+					map[string]interface{}{
+						"InvoiceNumber": invoice.InvoiceNumber,
+						"VendorName":    invoice.VendorID,
+						"Amount":        invoice.TotalAmount,
+						"StepNumber":    firstStep.StepNumber,
+					},
+				)
+			}
 		}
 	}
 
@@ -339,6 +360,18 @@ func (h *GRPCHandler) RejectInvoice(ctx context.Context, req *pb.RejectInvoiceRe
 		h.logger.Error().Err(err).Msg("Failed to reject invoice")
 		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
 	}
+
+	// Notify submitter of rejection (non-fatal)
+	if h.notificationPublisher != nil && wf.SubmittedBy != "" {
+		h.notificationPublisher.PublishInvoiceEvent(ctx, "invoice_rejected",
+			req.Id, req.EntityId, rejectedBy, []string{wf.SubmittedBy},
+			map[string]interface{}{
+				"InvoiceNumber": req.Id,
+				"Reason":        req.Reason,
+			},
+		)
+	}
+
 	return &commonpb.Response{Success: true, Message: "Invoice rejected"}, nil
 }
 
