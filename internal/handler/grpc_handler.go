@@ -342,6 +342,164 @@ func (h *GRPCHandler) RejectInvoice(ctx context.Context, req *pb.RejectInvoiceRe
 	return &commonpb.Response{Success: true, Message: "Invoice rejected"}, nil
 }
 
+// RecallInvoice cancels a pending-approval invoice (submitter only).
+func (h *GRPCHandler) RecallInvoice(ctx context.Context, req *pb.RecallInvoiceRequest) (*commonpb.Response, error) {
+	uid := userID(ctx)
+	h.logger.Info().
+		Str("entity_id", req.EntityId).
+		Str("id", req.Id).
+		Str("recalled_by", uid).
+		Msg("gRPC RecallInvoice called")
+
+	wf, err := h.routingService.GetActiveWorkflow(ctx, req.Id)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to get active workflow for recall")
+		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+	}
+
+	if wf != nil {
+		// Workflow path: recall via routing service (validates submitter, recalls steps)
+		if err := h.routingService.RecallWorkflow(ctx, req.Id, wf.ID, uid); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to recall workflow")
+			return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+		}
+	} else {
+		// Legacy path: direct status update
+		if err := h.invoiceService.RecallInvoice(ctx, req.Id, req.EntityId, uid); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to recall invoice")
+			return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+		}
+	}
+
+	return &commonpb.Response{Success: true, Message: "Invoice recalled"}, nil
+}
+
+// DelegateApproval delegates an approval step to another user.
+func (h *GRPCHandler) DelegateApproval(ctx context.Context, req *pb.DelegateApprovalRequest) (*commonpb.Response, error) {
+	uid := userID(ctx)
+	h.logger.Info().
+		Str("entity_id", req.EntityId).
+		Str("invoice_id", req.InvoiceId).
+		Int32("step_number", req.StepNumber).
+		Str("delegated_to", req.DelegatedTo).
+		Msg("gRPC DelegateApproval called")
+
+	if req.DelegatedTo == "" {
+		return &commonpb.Response{Success: false, Message: "delegated_to is required"}, status.Error(codes.InvalidArgument, "delegated_to is required")
+	}
+	if req.Reason == "" {
+		return &commonpb.Response{Success: false, Message: "reason is required"}, status.Error(codes.InvalidArgument, "reason is required")
+	}
+
+	wf, err := h.routingService.GetActiveWorkflow(ctx, req.InvoiceId)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to get active workflow")
+		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+	}
+	if wf == nil {
+		return &commonpb.Response{Success: false, Message: "no active workflow found"}, status.Error(codes.NotFound, "no active workflow found")
+	}
+
+	if err := h.routingService.DelegateStep(ctx, wf.ID, int(req.StepNumber), uid, req.DelegatedTo, req.Reason); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to delegate approval")
+		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+	}
+
+	return &commonpb.Response{Success: true, Message: "Approval delegated"}, nil
+}
+
+// GetApprovalHistory returns the full audit trail for an invoice.
+func (h *GRPCHandler) GetApprovalHistory(ctx context.Context, req *pb.GetApprovalHistoryRequest) (*pb.GetApprovalHistoryResponse, error) {
+	h.logger.Info().
+		Str("entity_id", req.EntityId).
+		Str("invoice_id", req.InvoiceId).
+		Msg("gRPC GetApprovalHistory called")
+
+	entries, err := h.routingService.GetApprovalHistory(ctx, req.InvoiceId, req.EntityId)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to get approval history")
+		return nil, mapErrorToGRPC(err)
+	}
+
+	pbEntries := make([]*pb.ApprovalHistoryEntry, 0, len(entries))
+	for _, e := range entries {
+		entry := &pb.ApprovalHistoryEntry{
+			Id:                  e.ID,
+			InvoiceId:           e.InvoiceID,
+			Action:              e.Action,
+			PerformedBy:         e.PerformedBy,
+			PerformedAt:         timestamppb.New(e.PerformedAt),
+		}
+		if e.WorkflowID != nil {
+			entry.WorkflowId = *e.WorkflowID
+		}
+		if e.StepID != nil {
+			entry.StepId = *e.StepID
+		}
+		if e.InvoiceStatusBefore != nil {
+			entry.InvoiceStatusBefore = *e.InvoiceStatusBefore
+		}
+		if e.InvoiceStatusAfter != nil {
+			entry.InvoiceStatusAfter = *e.InvoiceStatusAfter
+		}
+		// Extract notes from metadata if present
+		if notes, ok := e.Metadata["reason"].(string); ok && notes != "" {
+			entry.Notes = notes
+		} else if notes, ok := e.Metadata["action_notes"].(string); ok && notes != "" {
+			entry.Notes = notes
+		}
+		pbEntries = append(pbEntries, entry)
+	}
+
+	return &pb.GetApprovalHistoryResponse{Entries: pbEntries}, nil
+}
+
+// GetPendingApprovals returns approval steps awaiting action from the user.
+func (h *GRPCHandler) GetPendingApprovals(ctx context.Context, req *pb.GetPendingApprovalsRequest) (*pb.GetPendingApprovalsResponse, error) {
+	uid := req.UserId
+	if uid == "" {
+		uid = userID(ctx)
+	}
+	h.logger.Info().
+		Str("entity_id", req.EntityId).
+		Str("user_id", uid).
+		Msg("gRPC GetPendingApprovals called")
+
+	steps, err := h.routingService.GetPendingApprovals(ctx, req.EntityId, uid)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to get pending approvals")
+		return nil, mapErrorToGRPC(err)
+	}
+
+	items := make([]*pb.PendingApprovalItem, 0, len(steps))
+	for _, s := range steps {
+		item := &pb.PendingApprovalItem{
+			StepId:       s.ID,
+			WorkflowId:   s.WorkflowID,
+			InvoiceId:    s.InvoiceID,
+			EntityId:     s.EntityID,
+			StepNumber:   int32(s.StepNumber),
+			RequiredRole: s.RequiredRole,
+			CreatedAt:    timestamppb.New(s.CreatedAt),
+		}
+		if s.AssignedTo != nil {
+			item.AssignedTo = *s.AssignedTo
+		}
+		if s.DelegatedTo != nil {
+			item.DelegatedTo = *s.DelegatedTo
+		}
+		if s.DueAt != nil {
+			item.DueAt = timestamppb.New(*s.DueAt)
+		}
+		items = append(items, item)
+	}
+
+	return &pb.GetPendingApprovalsResponse{
+		Items: items,
+		Total: int32(len(items)),
+	}, nil
+}
+
 // PostToGL posts an invoice to the general ledger
 func (h *GRPCHandler) PostToGL(ctx context.Context, req *pb.PostToGLRequest) (*pb.PostToGLResponse, error) {
 	h.logger.Info().
