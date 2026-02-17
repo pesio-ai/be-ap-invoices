@@ -306,10 +306,35 @@ func (h *GRPCHandler) ApproveInvoice(ctx context.Context, req *pb.ApproveInvoice
 
 	if wf != nil {
 		// Multi-step workflow path
-		_, err = h.routingService.ApproveStep(ctx, req.Id, wf.ID, wf.CurrentStep, uid, notes)
+		workflowComplete, err := h.routingService.ApproveStep(ctx, req.Id, wf.ID, wf.CurrentStep, uid, notes)
 		if err != nil {
 			h.logger.Error().Err(err).Msg("Failed to approve workflow step")
 			return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+		}
+		if h.notificationPublisher != nil {
+			payload := map[string]interface{}{
+				"StepNumber": wf.CurrentStep,
+				"TotalSteps": wf.TotalSteps,
+			}
+			if workflowComplete {
+				// All steps done — notify submitter that invoice is approved
+				if wf.SubmittedBy != "" {
+					h.notificationPublisher.PublishInvoiceEvent(ctx, "invoice_approved",
+						req.Id, wf.EntityID, uid, []string{wf.SubmittedBy}, payload,
+					)
+				}
+			} else {
+				// More steps remain — notify submitter (and any assigned next approver)
+				recipients := []string{}
+				if wf.SubmittedBy != "" {
+					recipients = append(recipients, wf.SubmittedBy)
+				}
+				if len(recipients) > 0 {
+					h.notificationPublisher.PublishInvoiceEvent(ctx, "invoice_approval_required",
+						req.Id, wf.EntityID, uid, recipients, payload,
+					)
+				}
+			}
 		}
 		return &commonpb.Response{Success: true, Message: "Approval step recorded"}, nil
 	}
