@@ -258,21 +258,23 @@ func (h *GRPCHandler) SubmitForApproval(ctx context.Context, req *pb.SubmitForAp
 				Int("total_steps", wf.TotalSteps).
 				Msg("Approval workflow created")
 
-			// Notify first approvers
-			if h.notificationPublisher != nil && len(steps) > 0 {
-				firstStep := steps[0]
-				var recipients []string
-				if firstStep.AssignedTo != nil {
-					recipients = []string{*firstStep.AssignedTo}
+			// Notify approver(s) + submitter about the new pending approval
+			if h.notificationPublisher != nil {
+				// Always notify the submitter; add the first assigned approver if known
+				recipients := []string{uid}
+				if len(steps) > 0 && steps[0].AssignedTo != nil && *steps[0].AssignedTo != uid {
+					recipients = append(recipients, *steps[0].AssignedTo)
+				}
+				payload := map[string]interface{}{
+					"InvoiceNumber": invoice.InvoiceNumber,
+					"VendorName":    invoice.VendorID,
+					"Amount":        invoice.TotalAmount,
+				}
+				if len(steps) > 0 {
+					payload["StepNumber"] = steps[0].StepNumber
 				}
 				h.notificationPublisher.PublishInvoiceEvent(ctx, "invoice_submitted",
-					req.Id, req.EntityId, uid, recipients,
-					map[string]interface{}{
-						"InvoiceNumber": invoice.InvoiceNumber,
-						"VendorName":    invoice.VendorID,
-						"Amount":        invoice.TotalAmount,
-						"StepNumber":    firstStep.StepNumber,
-					},
+					req.Id, req.EntityId, uid, recipients, payload,
 				)
 			}
 		}

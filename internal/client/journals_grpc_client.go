@@ -18,7 +18,10 @@ type JournalsGRPCClient struct {
 // NewJournalsGRPCClient creates a new journals gRPC client
 func NewJournalsGRPCClient(address string) (*JournalsGRPCClient, error) {
 	// Create gRPC connection
-	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(forwardMetadata),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to journals service: %w", err)
 	}

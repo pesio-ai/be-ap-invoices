@@ -17,7 +17,10 @@ type VendorsGRPCClient struct {
 
 // NewVendorsGRPCClient creates a new vendors service gRPC client
 func NewVendorsGRPCClient(addr string) (*VendorsGRPCClient, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(forwardMetadata),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gRPC connection: %w", err)
 	}
