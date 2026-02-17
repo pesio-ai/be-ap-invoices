@@ -595,6 +595,73 @@ func (s *InvoiceService) SubmitForApproval(ctx context.Context, id, entityID, su
 	return nil
 }
 
+// RejectInvoice rejects a pending-approval invoice and returns it to draft.
+// This is the service-level (non-workflow) path. The workflow path is handled
+// directly by ApprovalRoutingService from the gRPC handler.
+func (s *InvoiceService) RejectInvoice(ctx context.Context, id, entityID, rejectedBy, reason string) error {
+	invoice, err := s.invoiceRepo.GetByID(ctx, id, entityID)
+	if err != nil {
+		return err
+	}
+
+	if invoice.Status != "pending_approval" {
+		return errors.New(errors.ErrCodeConflict,
+			fmt.Sprintf("cannot reject invoice with status '%s'", invoice.Status))
+	}
+	if reason == "" {
+		return errors.InvalidInput("reason", "rejection reason is required")
+	}
+
+	var rejectedByPtr *string
+	if rejectedBy != "" {
+		rejectedByPtr = &rejectedBy
+	}
+
+	if err := s.invoiceRepo.UpdateStatus(ctx, id, entityID, "draft", rejectedByPtr); err != nil {
+		return err
+	}
+
+	s.log.Info().
+		Str("invoice_id", id).
+		Str("invoice_number", invoice.InvoiceNumber).
+		Str("rejected_by", rejectedBy).
+		Str("reason", reason).
+		Msg("Invoice rejected")
+
+	return nil
+}
+
+// RecallInvoice lets the original submitter cancel a pending-approval invoice.
+// This is the service-level path; the workflow path calls ApprovalRoutingService.
+func (s *InvoiceService) RecallInvoice(ctx context.Context, id, entityID, recalledBy string) error {
+	invoice, err := s.invoiceRepo.GetByID(ctx, id, entityID)
+	if err != nil {
+		return err
+	}
+
+	if invoice.Status != "pending_approval" {
+		return errors.New(errors.ErrCodeConflict,
+			fmt.Sprintf("cannot recall invoice with status '%s'", invoice.Status))
+	}
+
+	var recalledByPtr *string
+	if recalledBy != "" {
+		recalledByPtr = &recalledBy
+	}
+
+	if err := s.invoiceRepo.UpdateStatus(ctx, id, entityID, "draft", recalledByPtr); err != nil {
+		return err
+	}
+
+	s.log.Info().
+		Str("invoice_id", id).
+		Str("invoice_number", invoice.InvoiceNumber).
+		Str("recalled_by", recalledBy).
+		Msg("Invoice recalled")
+
+	return nil
+}
+
 // DeleteInvoice deletes a draft invoice
 func (s *InvoiceService) DeleteInvoice(ctx context.Context, id, entityID string) error {
 	// Verify invoice exists and is draft

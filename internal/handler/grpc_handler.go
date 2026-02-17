@@ -225,7 +225,7 @@ func (h *GRPCHandler) ListInvoices(ctx context.Context, req *pb.ListInvoicesRequ
 	}, nil
 }
 
-// SubmitForApproval submits an invoice for approval
+// SubmitForApproval submits an invoice for approval and creates its workflow.
 func (h *GRPCHandler) SubmitForApproval(ctx context.Context, req *pb.SubmitForApprovalRequest) (*commonpb.Response, error) {
 	uid := userID(ctx)
 	h.logger.Info().
@@ -234,10 +234,27 @@ func (h *GRPCHandler) SubmitForApproval(ctx context.Context, req *pb.SubmitForAp
 		Str("submitted_by", uid).
 		Msg("gRPC SubmitForApproval called")
 
-	err := h.invoiceService.SubmitForApproval(ctx, req.Id, req.EntityId, uid)
-	if err != nil {
+	// 1. Update invoice status to pending_approval
+	if err := h.invoiceService.SubmitForApproval(ctx, req.Id, req.EntityId, uid); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to submit for approval")
 		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+	}
+
+	// 2. Create approval workflow (non-fatal: invoice is already submitted)
+	invoice, err := h.invoiceService.GetInvoice(ctx, req.Id, req.EntityId)
+	if err != nil {
+		h.logger.Warn().Err(err).Str("invoice_id", req.Id).Msg("Could not fetch invoice for workflow creation")
+	} else {
+		wf, _, err := h.routingService.CreateApprovalWorkflow(ctx, invoice, uid)
+		if err != nil {
+			h.logger.Warn().Err(err).Str("invoice_id", req.Id).Msg("Could not create approval workflow")
+		} else {
+			h.logger.Info().
+				Str("invoice_id", req.Id).
+				Str("workflow_id", wf.ID).
+				Int("total_steps", wf.TotalSteps).
+				Msg("Approval workflow created")
+		}
 	}
 
 	return &commonpb.Response{Success: true, Message: "Invoice submitted for approval"}, nil
