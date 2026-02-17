@@ -14,15 +14,18 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	pb "github.com/pesio-ai/be-lib-proto/gen/go/ap"
+	"github.com/pesio-ai/be-lib-common/auth"
 	"github.com/pesio-ai/be-lib-common/config"
 	"github.com/pesio-ai/be-lib-common/database"
 	"github.com/pesio-ai/be-lib-common/health"
 	"github.com/pesio-ai/be-lib-common/logger"
 	"github.com/pesio-ai/be-lib-common/middleware"
+	identitypb "github.com/pesio-ai/be-lib-proto/gen/go/platform"
 	"github.com/pesio-ai/be-ap-invoices/internal/client"
 	"github.com/pesio-ai/be-ap-invoices/internal/handler"
 	"github.com/pesio-ai/be-ap-invoices/internal/repository"
 	"github.com/pesio-ai/be-ap-invoices/internal/service"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -73,6 +76,10 @@ func main() {
 
 	// Initialize repositories
 	invoiceRepo := repository.NewInvoiceRepository(db)
+	rulesRepo := repository.NewApprovalRulesRepository(db)
+	workflowRepo := repository.NewApprovalWorkflowRepository(db)
+	stepsRepo := repository.NewApprovalStepsRepository(db)
+	auditRepo := repository.NewApprovalAuditRepository(db)
 
 	// Initialize gRPC service clients
 	vendorsGrpcAddr := getEnv("VENDORS_GRPC_URL", "localhost:9084")
@@ -96,14 +103,31 @@ func main() {
 	}
 	defer journalsClient.Close()
 
+	// Connect to identity service for authentication
+	identityGrpcAddr := getEnv("IDENTITY_GRPC_URL", "localhost:9080")
+	identityConn, err := grpc.NewClient(identityGrpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to connect to identity service")
+	}
+	defer identityConn.Close()
+	identityProtoClient := identitypb.NewIdentityServiceClient(identityConn)
+
+	identityClient, err := client.NewIdentityGRPCClient(identityGrpcAddr)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to create identity gRPC client")
+	}
+	defer identityClient.Close()
+
 	log.Info().
 		Str("vendors_grpc", vendorsGrpcAddr).
 		Str("accounts_grpc", accountsGrpcAddr).
 		Str("journals_grpc", journalsGrpcAddr).
+		Str("identity_grpc", identityGrpcAddr).
 		Msg("gRPC service clients initialized")
 
 	// Initialize services
 	invoiceService := service.NewInvoiceService(invoiceRepo, vendorsClient, accountsClient, journalsClient, log)
+	routingService := service.NewApprovalRoutingService(rulesRepo, workflowRepo, stepsRepo, auditRepo, invoiceRepo, identityClient, log)
 
 	// Setup HTTP routes
 	httpHandler := handler.NewHTTPHandler(invoiceService, log)
@@ -157,9 +181,12 @@ func main() {
 
 	// Start gRPC server
 	grpcPort := getEnvInt("GRPC_PORT", 9085)
-	grpcHandler := handler.NewGRPCHandler(invoiceService, log.Logger)
+	grpcHandler := handler.NewGRPCHandler(invoiceService, routingService, log.Logger)
 
-	grpcServer := grpc.NewServer()
+	authInterceptor := auth.NewInterceptor(identityProtoClient, log)
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(authInterceptor.UnaryServerInterceptor()),
+	)
 	pb.RegisterInvoicesServiceServer(grpcServer, grpcHandler)
 	reflection.Register(grpcServer) // Enable reflection for debugging
 

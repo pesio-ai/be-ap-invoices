@@ -11,6 +11,7 @@ import (
 
 	commonpb "github.com/pesio-ai/be-lib-proto/gen/go/common"
 	pb "github.com/pesio-ai/be-lib-proto/gen/go/ap"
+	"github.com/pesio-ai/be-lib-common/auth"
 	"github.com/pesio-ai/be-ap-invoices/internal/repository"
 	"github.com/pesio-ai/be-ap-invoices/internal/service"
 )
@@ -18,16 +19,26 @@ import (
 // GRPCHandler implements the InvoicesService gRPC interface
 type GRPCHandler struct {
 	pb.UnimplementedInvoicesServiceServer
-	invoiceService *service.InvoiceService
-	logger         zerolog.Logger
+	invoiceService  *service.InvoiceService
+	routingService  *service.ApprovalRoutingService
+	logger          zerolog.Logger
 }
 
 // NewGRPCHandler creates a new gRPC handler
-func NewGRPCHandler(invoiceService *service.InvoiceService, logger zerolog.Logger) *GRPCHandler {
+func NewGRPCHandler(invoiceService *service.InvoiceService, routingService *service.ApprovalRoutingService, logger zerolog.Logger) *GRPCHandler {
 	return &GRPCHandler{
-		invoiceService: invoiceService,
-		logger:         logger.With().Str("handler", "grpc").Logger(),
+		invoiceService:  invoiceService,
+		routingService:  routingService,
+		logger:          logger.With().Str("handler", "grpc").Logger(),
 	}
+}
+
+// userID extracts the authenticated user ID from context, or returns empty string.
+func userID(ctx context.Context) string {
+	if uc, err := auth.GetUserContext(ctx); err == nil {
+		return uc.UserID
+	}
+	return ""
 }
 
 // CreateInvoice creates a new invoice
@@ -216,14 +227,14 @@ func (h *GRPCHandler) ListInvoices(ctx context.Context, req *pb.ListInvoicesRequ
 
 // SubmitForApproval submits an invoice for approval
 func (h *GRPCHandler) SubmitForApproval(ctx context.Context, req *pb.SubmitForApprovalRequest) (*commonpb.Response, error) {
+	uid := userID(ctx)
 	h.logger.Info().
 		Str("entity_id", req.EntityId).
 		Str("id", req.Id).
+		Str("submitted_by", uid).
 		Msg("gRPC SubmitForApproval called")
 
-	// The service method expects submittedBy, but proto doesn't have it
-	// Use empty string for now
-	err := h.invoiceService.SubmitForApproval(ctx, req.Id, req.EntityId, "")
+	err := h.invoiceService.SubmitForApproval(ctx, req.Id, req.EntityId, uid)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to submit for approval")
 		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
@@ -232,44 +243,86 @@ func (h *GRPCHandler) SubmitForApproval(ctx context.Context, req *pb.SubmitForAp
 	return &commonpb.Response{Success: true, Message: "Invoice submitted for approval"}, nil
 }
 
-// ApproveInvoice approves an invoice
+// ApproveInvoice advances the approval workflow by one step for the current user.
 func (h *GRPCHandler) ApproveInvoice(ctx context.Context, req *pb.ApproveInvoiceRequest) (*commonpb.Response, error) {
+	uid := userID(ctx)
 	h.logger.Info().
 		Str("entity_id", req.EntityId).
 		Str("id", req.Id).
-		Str("approved_by", req.ApprovedBy).
+		Str("acted_by", uid).
 		Msg("gRPC ApproveInvoice called")
 
-	approveReq := &service.ApproveInvoiceRequest{
-		ID:         req.Id,
-		EntityID:   req.EntityId,
-		ApprovedBy: req.ApprovedBy,
-	}
-
-	if req.Comments != "" {
-		approveReq.Notes = &req.Comments
-	}
-
-	_, err := h.invoiceService.ApproveInvoice(ctx, approveReq)
+	// Resolve active workflow
+	wf, err := h.routingService.GetActiveWorkflow(ctx, req.Id)
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to approve invoice")
+		h.logger.Error().Err(err).Msg("Failed to get active workflow")
 		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
 	}
 
+	var notes *string
+	if req.Comments != "" {
+		notes = &req.Comments
+	}
+
+	if wf != nil {
+		// Multi-step workflow path
+		_, err = h.routingService.ApproveStep(ctx, req.Id, wf.ID, wf.CurrentStep, uid, notes)
+		if err != nil {
+			h.logger.Error().Err(err).Msg("Failed to approve workflow step")
+			return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+		}
+		return &commonpb.Response{Success: true, Message: "Approval step recorded"}, nil
+	}
+
+	// Legacy single-step path (no workflow)
+	approvedBy := uid
+	if approvedBy == "" {
+		approvedBy = req.ApprovedBy
+	}
+	approveReq := &service.ApproveInvoiceRequest{
+		ID:         req.Id,
+		EntityID:   req.EntityId,
+		ApprovedBy: approvedBy,
+		Notes:      notes,
+	}
+	if _, err := h.invoiceService.ApproveInvoice(ctx, approveReq); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to approve invoice")
+		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+	}
 	return &commonpb.Response{Success: true, Message: "Invoice approved"}, nil
 }
 
-// RejectInvoice rejects an invoice
+// RejectInvoice rejects the active workflow step and returns the invoice to draft.
 func (h *GRPCHandler) RejectInvoice(ctx context.Context, req *pb.RejectInvoiceRequest) (*commonpb.Response, error) {
+	uid := userID(ctx)
 	h.logger.Info().
 		Str("entity_id", req.EntityId).
 		Str("id", req.Id).
-		Str("rejected_by", req.RejectedBy).
+		Str("acted_by", uid).
 		Msg("gRPC RejectInvoice called")
 
-	// NOTE: The service doesn't have a RejectInvoice method yet
-	// For now, return unimplemented
-	return nil, status.Error(codes.Unimplemented, "RejectInvoice not implemented")
+	if req.Reason == "" {
+		return &commonpb.Response{Success: false, Message: "reason is required"}, status.Error(codes.InvalidArgument, "reason is required")
+	}
+
+	wf, err := h.routingService.GetActiveWorkflow(ctx, req.Id)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to get active workflow")
+		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+	}
+	if wf == nil {
+		return &commonpb.Response{Success: false, Message: "no active workflow found"}, status.Error(codes.NotFound, "no active workflow found")
+	}
+
+	rejectedBy := uid
+	if rejectedBy == "" {
+		rejectedBy = req.RejectedBy
+	}
+	if err := h.routingService.RejectWorkflow(ctx, req.Id, wf.ID, wf.CurrentStep, rejectedBy, req.Reason); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to reject invoice")
+		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+	}
+	return &commonpb.Response{Success: true, Message: "Invoice rejected"}, nil
 }
 
 // PostToGL posts an invoice to the general ledger
@@ -283,7 +336,7 @@ func (h *GRPCHandler) PostToGL(ctx context.Context, req *pb.PostToGLRequest) (*p
 	postReq := &service.PostInvoiceRequest{
 		ID:       req.Id,
 		EntityID: req.EntityId,
-		PostedBy: "", // Proto doesn't have this, use context in future
+		PostedBy: userID(ctx),
 	}
 
 	invoice, err := h.invoiceService.PostInvoice(ctx, postReq)
