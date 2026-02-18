@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -21,16 +22,24 @@ import (
 type GRPCHandler struct {
 	pb.UnimplementedInvoicesServiceServer
 	invoiceService        *service.InvoiceService
-	routingService        *service.ApprovalRoutingService
+	routingService        *service.ApprovalRoutingService // kept for GetApprovalHistory (legacy audit log)
+	approvalsClient       *client.ApprovalsGRPCClient
 	notificationPublisher *client.NotificationPublisher
 	logger                zerolog.Logger
 }
 
 // NewGRPCHandler creates a new gRPC handler
-func NewGRPCHandler(invoiceService *service.InvoiceService, routingService *service.ApprovalRoutingService, notificationPublisher *client.NotificationPublisher, logger zerolog.Logger) *GRPCHandler {
+func NewGRPCHandler(
+	invoiceService *service.InvoiceService,
+	routingService *service.ApprovalRoutingService,
+	approvalsClient *client.ApprovalsGRPCClient,
+	notificationPublisher *client.NotificationPublisher,
+	logger zerolog.Logger,
+) *GRPCHandler {
 	return &GRPCHandler{
 		invoiceService:        invoiceService,
 		routingService:        routingService,
+		approvalsClient:       approvalsClient,
 		notificationPublisher: notificationPublisher,
 		logger:                logger.With().Str("handler", "grpc").Logger(),
 	}
@@ -243,35 +252,35 @@ func (h *GRPCHandler) SubmitForApproval(ctx context.Context, req *pb.SubmitForAp
 		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
 	}
 
-	// 2. Create approval workflow (non-fatal: invoice is already submitted)
+	// 2. Create approval workflow via be-plt-approvals (non-fatal: invoice is already submitted)
 	invoice, err := h.invoiceService.GetInvoice(ctx, req.Id, req.EntityId)
 	if err != nil {
 		h.logger.Warn().Err(err).Str("invoice_id", req.Id).Msg("Could not fetch invoice for workflow creation")
 	} else {
-		wf, steps, err := h.routingService.CreateApprovalWorkflow(ctx, invoice, uid)
+		contextJSON := buildInvoiceContextJSON(invoice)
+		wf, err := h.approvalsClient.CreateWorkflow(ctx, req.EntityId, "INVOICE", req.Id, contextJSON, uid)
 		if err != nil {
 			h.logger.Warn().Err(err).Str("invoice_id", req.Id).Msg("Could not create approval workflow")
 		} else {
 			h.logger.Info().
 				Str("invoice_id", req.Id).
-				Str("workflow_id", wf.ID).
-				Int("total_steps", wf.TotalSteps).
+				Str("workflow_id", wf.Id).
+				Int32("total_steps", wf.TotalSteps).
 				Msg("Approval workflow created")
 
 			// Notify approver(s) + submitter about the new pending approval
 			if h.notificationPublisher != nil {
-				// Always notify the submitter; add the first assigned approver if known
 				recipients := []string{uid}
-				if len(steps) > 0 && steps[0].AssignedTo != nil && *steps[0].AssignedTo != uid {
-					recipients = append(recipients, *steps[0].AssignedTo)
+				if len(wf.Steps) > 0 && wf.Steps[0].AssignedTo != "" && wf.Steps[0].AssignedTo != uid {
+					recipients = append(recipients, wf.Steps[0].AssignedTo)
 				}
 				payload := map[string]interface{}{
 					"InvoiceNumber": invoice.InvoiceNumber,
 					"VendorName":    invoice.VendorID,
 					"Amount":        invoice.TotalAmount,
 				}
-				if len(steps) > 0 {
-					payload["StepNumber"] = steps[0].StepNumber
+				if len(wf.Steps) > 0 {
+					payload["StepNumber"] = wf.Steps[0].StepNumber
 				}
 				h.notificationPublisher.PublishInvoiceEvent(ctx, "invoice_submitted",
 					req.Id, req.EntityId, uid, recipients, payload,
@@ -292,8 +301,8 @@ func (h *GRPCHandler) ApproveInvoice(ctx context.Context, req *pb.ApproveInvoice
 		Str("acted_by", uid).
 		Msg("gRPC ApproveInvoice called")
 
-	// Resolve active workflow
-	wf, err := h.routingService.GetActiveWorkflow(ctx, req.Id)
+	// Resolve active workflow from be-plt-approvals
+	wf, err := h.approvalsClient.GetActiveWorkflow(ctx, req.EntityId, "INVOICE", req.Id)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get active workflow")
 		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
@@ -305,11 +314,24 @@ func (h *GRPCHandler) ApproveInvoice(ctx context.Context, req *pb.ApproveInvoice
 	}
 
 	if wf != nil {
-		// Multi-step workflow path
-		workflowComplete, err := h.routingService.ApproveStep(ctx, req.Id, wf.ID, wf.CurrentStep, uid, notes)
+		// Multi-step workflow path via be-plt-approvals
+		workflowComplete, _, err := h.approvalsClient.ApproveStep(ctx, req.EntityId, wf.Id, wf.CurrentStep, uid, req.Comments)
 		if err != nil {
 			h.logger.Error().Err(err).Msg("Failed to approve workflow step")
 			return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+		}
+		if workflowComplete {
+			// All steps done — mark invoice as approved
+			approveReq := &service.ApproveInvoiceRequest{
+				ID:         req.Id,
+				EntityID:   req.EntityId,
+				ApprovedBy: uid,
+				Notes:      notes,
+			}
+			if _, err := h.invoiceService.ApproveInvoice(ctx, approveReq); err != nil {
+				h.logger.Error().Err(err).Msg("Failed to update invoice status to approved")
+				return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+			}
 		}
 		if h.notificationPublisher != nil {
 			payload := map[string]interface{}{
@@ -317,21 +339,19 @@ func (h *GRPCHandler) ApproveInvoice(ctx context.Context, req *pb.ApproveInvoice
 				"TotalSteps": wf.TotalSteps,
 			}
 			if workflowComplete {
-				// All steps done — notify submitter that invoice is approved
 				if wf.SubmittedBy != "" {
 					h.notificationPublisher.PublishInvoiceEvent(ctx, "invoice_approved",
-						req.Id, wf.EntityID, uid, []string{wf.SubmittedBy}, payload,
+						req.Id, wf.EntityId, uid, []string{wf.SubmittedBy}, payload,
 					)
 				}
 			} else {
-				// More steps remain — notify submitter (and any assigned next approver)
 				recipients := []string{}
 				if wf.SubmittedBy != "" {
 					recipients = append(recipients, wf.SubmittedBy)
 				}
 				if len(recipients) > 0 {
 					h.notificationPublisher.PublishInvoiceEvent(ctx, "invoice_approval_required",
-						req.Id, wf.EntityID, uid, recipients, payload,
+						req.Id, wf.EntityId, uid, recipients, payload,
 					)
 				}
 			}
@@ -339,7 +359,7 @@ func (h *GRPCHandler) ApproveInvoice(ctx context.Context, req *pb.ApproveInvoice
 		return &commonpb.Response{Success: true, Message: "Approval step recorded"}, nil
 	}
 
-	// Legacy single-step path (no workflow)
+	// Legacy single-step path (no active workflow in be-plt-approvals)
 	approvedBy := uid
 	if approvedBy == "" {
 		approvedBy = req.ApprovedBy
@@ -370,7 +390,7 @@ func (h *GRPCHandler) RejectInvoice(ctx context.Context, req *pb.RejectInvoiceRe
 		return &commonpb.Response{Success: false, Message: "reason is required"}, status.Error(codes.InvalidArgument, "reason is required")
 	}
 
-	wf, err := h.routingService.GetActiveWorkflow(ctx, req.Id)
+	wf, err := h.approvalsClient.GetActiveWorkflow(ctx, req.EntityId, "INVOICE", req.Id)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get active workflow")
 		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
@@ -383,8 +403,14 @@ func (h *GRPCHandler) RejectInvoice(ctx context.Context, req *pb.RejectInvoiceRe
 	if rejectedBy == "" {
 		rejectedBy = req.RejectedBy
 	}
-	if err := h.routingService.RejectWorkflow(ctx, req.Id, wf.ID, wf.CurrentStep, rejectedBy, req.Reason); err != nil {
-		h.logger.Error().Err(err).Msg("Failed to reject invoice")
+	if err := h.approvalsClient.RejectWorkflow(ctx, req.EntityId, wf.Id, wf.CurrentStep, rejectedBy, req.Reason); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to reject workflow")
+		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
+	}
+
+	// Reset invoice to draft
+	if err := h.invoiceService.RejectInvoice(ctx, req.Id, req.EntityId, rejectedBy, req.Reason); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to update invoice status after rejection")
 		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
 	}
 
@@ -411,24 +437,24 @@ func (h *GRPCHandler) RecallInvoice(ctx context.Context, req *pb.RecallInvoiceRe
 		Str("recalled_by", uid).
 		Msg("gRPC RecallInvoice called")
 
-	wf, err := h.routingService.GetActiveWorkflow(ctx, req.Id)
+	wf, err := h.approvalsClient.GetActiveWorkflow(ctx, req.EntityId, "INVOICE", req.Id)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get active workflow for recall")
 		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
 	}
 
 	if wf != nil {
-		// Workflow path: recall via routing service (validates submitter, recalls steps)
-		if err := h.routingService.RecallWorkflow(ctx, req.Id, wf.ID, uid); err != nil {
+		// Recall via be-plt-approvals (validates submitter, recalls steps)
+		if err := h.approvalsClient.RecallWorkflow(ctx, req.EntityId, wf.Id, uid); err != nil {
 			h.logger.Error().Err(err).Msg("Failed to recall workflow")
 			return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
 		}
-	} else {
-		// Legacy path: direct status update
-		if err := h.invoiceService.RecallInvoice(ctx, req.Id, req.EntityId, uid); err != nil {
-			h.logger.Error().Err(err).Msg("Failed to recall invoice")
-			return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
-		}
+	}
+
+	// Reset invoice to draft
+	if err := h.invoiceService.RecallInvoice(ctx, req.Id, req.EntityId, uid); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to recall invoice")
+		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
 	}
 
 	return &commonpb.Response{Success: true, Message: "Invoice recalled"}, nil
@@ -451,7 +477,7 @@ func (h *GRPCHandler) DelegateApproval(ctx context.Context, req *pb.DelegateAppr
 		return &commonpb.Response{Success: false, Message: "reason is required"}, status.Error(codes.InvalidArgument, "reason is required")
 	}
 
-	wf, err := h.routingService.GetActiveWorkflow(ctx, req.InvoiceId)
+	wf, err := h.approvalsClient.GetActiveWorkflow(ctx, req.EntityId, "INVOICE", req.InvoiceId)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get active workflow")
 		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
@@ -460,7 +486,7 @@ func (h *GRPCHandler) DelegateApproval(ctx context.Context, req *pb.DelegateAppr
 		return &commonpb.Response{Success: false, Message: "no active workflow found"}, status.Error(codes.NotFound, "no active workflow found")
 	}
 
-	if err := h.routingService.DelegateStep(ctx, wf.ID, int(req.StepNumber), uid, req.DelegatedTo, req.Reason); err != nil {
+	if err := h.approvalsClient.DelegateStep(ctx, req.EntityId, wf.Id, req.StepNumber, uid, req.DelegatedTo, req.Reason); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to delegate approval")
 		return &commonpb.Response{Success: false, Message: err.Error()}, mapErrorToGRPC(err)
 	}
@@ -525,31 +551,26 @@ func (h *GRPCHandler) GetPendingApprovals(ctx context.Context, req *pb.GetPendin
 		Str("user_id", uid).
 		Msg("gRPC GetPendingApprovals called")
 
-	steps, err := h.routingService.GetPendingApprovals(ctx, req.EntityId, uid)
+	platItems, err := h.approvalsClient.GetPendingApprovals(ctx, req.EntityId, uid)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get pending approvals")
 		return nil, mapErrorToGRPC(err)
 	}
 
-	items := make([]*pb.PendingApprovalItem, 0, len(steps))
-	for _, s := range steps {
+	items := make([]*pb.PendingApprovalItem, 0, len(platItems))
+	for _, s := range platItems {
+		// Only return INVOICE items from this service; other entity types go through other services.
+		if s.EntityType != "" && s.EntityType != "INVOICE" {
+			continue
+		}
 		item := &pb.PendingApprovalItem{
-			StepId:       s.ID,
-			WorkflowId:   s.WorkflowID,
-			InvoiceId:    s.InvoiceID,
-			EntityId:     s.EntityID,
-			StepNumber:   int32(s.StepNumber),
+			WorkflowId:   s.WorkflowId,
+			InvoiceId:    s.EntityRef, // entity_ref = invoice ID when entity_type = INVOICE
+			EntityId:     s.EntityId,
+			StepNumber:   s.StepNumber,
 			RequiredRole: s.RequiredRole,
-			CreatedAt:    timestamppb.New(s.CreatedAt),
-		}
-		if s.AssignedTo != nil {
-			item.AssignedTo = *s.AssignedTo
-		}
-		if s.DelegatedTo != nil {
-			item.DelegatedTo = *s.DelegatedTo
-		}
-		if s.DueAt != nil {
-			item.DueAt = timestamppb.New(*s.DueAt)
+			AssignedTo:   s.AssignedTo,
+			CreatedAt:    s.CreatedAt,
 		}
 		items = append(items, item)
 	}
@@ -593,6 +614,34 @@ func (h *GRPCHandler) PostToGL(ctx context.Context, req *pb.PostToGLRequest) (*p
 }
 
 // Helper functions
+
+// buildInvoiceContextJSON creates the JSON context string sent to the AI for approval routing.
+func buildInvoiceContextJSON(inv *repository.Invoice) string {
+	type lineItem struct {
+		Description string `json:"description"`
+		Amount      int64  `json:"amount"`
+	}
+	type ctx struct {
+		InvoiceNumber string     `json:"invoiceNumber"`
+		Vendor        string     `json:"vendor"`
+		Amount        int64      `json:"amount"`
+		Description   string     `json:"description,omitempty"`
+		LineItems     []lineItem `json:"lineItems,omitempty"`
+	}
+	c := ctx{
+		InvoiceNumber: inv.InvoiceNumber,
+		Vendor:        inv.VendorID,
+		Amount:        inv.TotalAmount,
+	}
+	if inv.Description != nil {
+		c.Description = *inv.Description
+	}
+	for _, l := range inv.Lines {
+		c.LineItems = append(c.LineItems, lineItem{Description: l.Description, Amount: l.LineAmount})
+	}
+	b, _ := json.Marshal(c)
+	return string(b)
+}
 
 func invoiceToProto(inv *repository.Invoice) *pb.Invoice {
 	if inv == nil {

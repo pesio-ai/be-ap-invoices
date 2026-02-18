@@ -146,6 +146,15 @@ func main() {
 	invoiceService := service.NewInvoiceService(invoiceRepo, vendorsClient, accountsClient, journalsClient, log)
 	routingService := service.NewApprovalRoutingService(rulesRepo, workflowRepo, stepsRepo, auditRepo, invoiceRepo, identityClient, log)
 
+	// Initialize approvals service client (be-plt-approvals)
+	approvalsGrpcAddr := getEnv("APPROVALS_GRPC_URL", "localhost:9088")
+	approvalsClient, err := client.NewApprovalsGRPCClient(approvalsGrpcAddr)
+	if err != nil {
+		log.Fatal().Err(err).Str("addr", approvalsGrpcAddr).Msg("Failed to create approvals gRPC client")
+	}
+	defer approvalsClient.Close()
+	log.Info().Str("approvals_grpc", approvalsGrpcAddr).Msg("Approvals gRPC client initialized")
+
 	// Setup HTTP routes
 	httpHandler := handler.NewHTTPHandler(invoiceService, log)
 	mux := http.NewServeMux()
@@ -198,7 +207,7 @@ func main() {
 
 	// Start gRPC server
 	grpcPort := getEnvInt("GRPC_PORT", 9085)
-	grpcHandler := handler.NewGRPCHandler(invoiceService, routingService, notificationPublisher, log.Logger)
+	grpcHandler := handler.NewGRPCHandler(invoiceService, routingService, approvalsClient, notificationPublisher, log.Logger)
 
 	authInterceptor := auth.NewInterceptor(identityProtoClient, log)
 	grpcServer := grpc.NewServer(
